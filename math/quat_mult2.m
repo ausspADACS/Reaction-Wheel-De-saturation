@@ -1,0 +1,13 @@
+function [ result_quat ] = quat_mult2( q1, q2 )
+%Performs quaternion multiplication
+%   Differences from other quat_mult function are that output and input are
+%   row vectors
+
+  mult_mat = [q1(1) -q1(2) -q1(3) -q1(4);...
+                q1(2)  q1(1) q1(4)  -q1(3);...
+                q1(3)  -q1(4)  q1(1) q1(2);...
+                q1(4) q1(3)  -q1(2)  q1(1);...
+                ];
+            result_quat = (mult_mat*q2')';
+end
+
