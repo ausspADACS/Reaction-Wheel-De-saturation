@@ -6,28 +6,33 @@ clc, clear all
 addpath('Orbit3D')
 addpath('math')
 addpath('igrf')
-format bank
+format long
 disp(['Simulation started at ' datestr(now)])
-% Inputs
+%% INPUT
 sim_time = 1440; %minutes in simulation
     %95.63 = 1 orbit
 time_step = 10; %seconds between data sample--use numbers below 1
     %DO NOT SET BELOW 0.01 LEST YOU WISH TO MEET THE KRAKEN
-k = 500000; %De-saturation gain value
-%attitude = [0 0 0 0];
+k = 1000000; %De-saturation gain value
 B_field_body = zeros(sim_time/time_step,3);
 B_field_orb = zeros(sim_time/time_step,3);
 wheel_ang_vel = zeros(sim_time/time_step,3);
-wheel_ang_vel(1,:) = [837.76 -837.76 837.76];
-attitude = [0.71 0 0 0.71];
+sat_ang_vel = zeros(sim_time/time_step,3);
+attitude = zeros(sim_time/time_step,4);
+magnetorquer_torque = zeros(sim_time/time_step,3);
+mag_moment = zeros(sim_time/time_step,3);
+wheel_ang_vel(1,:) = [837.76 -837.76 837.76]; %deg/sec
+sat_ang_vel(1,:) = [0 0 0]; %deg/sec
+attitude(1,:) = [0.71 0 0 0.71];
 
-
+%% CALCULATE
 % Constants
 g_parameter = 3.986E14; %graviational parameter of earth, m^3 / s^2
 earth_radius = 6378; %radius of earth, km
 conv_to_rad = 0.01745329251;
 conv_to_deg = 57.29577951;
-wheelsMOI = [0.0612 0 0; 0 0.1346 0; 0 0 0.1758];
+wheelsMOI = [0.00000523 0 0; 0 0.00000523 0; 0 0 0.00000523]; %kg/m^2
+satMOI = [0.0612 0 0; 0 0.1346 0; 0 0 0.1758]; %kg/m^2
 
 % Orbit Specs
 orb_alt = 550; %mean altitude of orbit, km
@@ -62,26 +67,65 @@ end
 
 % Main loop
 for j = 1:size(B_field_orb, 1)
+    attitude(j,:) = attitude(j,:)/norm(attitude(j,:));
     % Rotate mag vec from orbital to body, convert from nT to T
-    B_field_body(j,:) = (v_rot_q(B_field_orb(j,:)', (attitude/norm(attitude))'))'*10^-9;
-    wheel_ang_momentum = (wheelsMOI * wheel_ang_vel(j,:)')';
-    mag_moment = k*cross(wheel_ang_momentum, B_field_body(j,:));
-    ang_accel = (inv(wheelsMOI)*cross(mag_moment, B_field_body(j,:))'*time_step)';
-    % Update wheel angular velocity
+    B_field_body(j,:) = (v_rot_q(B_field_orb(j,:)', (attitude(j,:))'))'*10^-9;
+    wheel_ang_momentum = (wheelsMOI * (wheel_ang_vel(j,:)*conv_to_rad)')';
+    mag_moment(j,:) = k*cross(wheel_ang_momentum,B_field_body(j,:));
+    wheel_ang_accel = (wheelsMOI\cross(mag_moment(j,:),B_field_body(j,:)')'*conv_to_deg)';
+    magnetorquer_torque(j,:) = cross(mag_moment(j,:), B_field_body(j,:));
+    wheel_torque = (wheelsMOI*(wheel_ang_accel'*conv_to_rad))';
+    total_torque = wheel_torque + magnetorquer_torque(j,:);% + wheel_torque;
+    sat_ang_accel = (satMOI\total_torque')'*conv_to_deg;
+    angle_change = delta(sat_ang_vel(j,:), sat_ang_accel, time_step);
+    change_quat = mat2quat(dcm(angle_change));
+    change_quat = change_quat/norm(change_quat);
+    % Update wheel and satellite angular velocity
     if j < size(B_field_orb, 1)
-        wheel_ang_vel(j+1,:) = wheel_ang_vel(j,:) + ang_accel;
+        attitude(j+1,:) = quat_mult2(change_quat, attitude(j,:));
+        wheel_ang_vel(j+1,:) = wheel_ang_vel(j,:) + wheel_ang_accel * time_step;
+        sat_ang_vel(j+1,:) = sat_ang_vel(j,:) + sat_ang_accel * time_step;
     end
 end
-
-% Graph Velocity
+%% OUTPUT
+% Plot Satellite angular velocity
 total_time = (0:(time_step / 60):sim_time)';
 figure()
+subplot(2,2,1)
 plot(total_time, wheel_ang_vel)
 title('Reaction Wheel Angular Velocity')
 legend('\omegax',  '\omegay', '\omegaz')
 xlabel('Time, minutes')
 ylabel('Angular Velocity, deg/s')
 grid on
+%Plot Satellite Attitude
+total_time = (0:(time_step / 60):sim_time)';
+subplot(2,2,2)
+plot(total_time, attitude)
+title('Satellite Attitude')
+legend('qw','qx',  'qy', 'qz')
+xlabel('Time, minutes')
+ylabel('Attitude')
+grid on
+%Plot Satellite Angular Velocity
+subplot(2,2,3)
+plot(total_time, sat_ang_vel)
+xlim([0 sim_time])
+title('Satellite Angular Velocity')
+legend('\omegax',  '\omegay', '\omegaz')
+xlabel('Time, minutes')
+ylabel('Angular Velocity, deg/s')
+grid on
+%Plot magnetic moment
+subplot(2,2,4)
+plot(total_time, mag_moment)
+xlim([0 sim_time])
+title('Magnetic Moments')
+legend('\mux',  '\muy', '\muz')
+xlabel('Time, minutes')
+ylabel('Magnetic Moment, A*m^2')
+grid on
 
+disp(k)
 runtime = toc; %end runtime counter
-fprintf('Total Simulation Time = %4.2f \n', runtime)
+fprintf('Total Simulation Time = %4.2fs \n', runtime)
